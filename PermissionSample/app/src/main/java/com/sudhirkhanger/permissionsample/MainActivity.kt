@@ -4,22 +4,15 @@ import android.Manifest.permission.CAMERA
 import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
+import android.provider.Settings
+import androidx.annotation.RequiresApi
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.coordinatorlayout.widget.CoordinatorLayout
-import androidx.core.app.ActivityCompat
-import com.google.android.material.snackbar.Snackbar
+import androidx.core.content.ContextCompat
 import kotlinx.android.synthetic.main.activity_main.*
-
-fun AppCompatActivity.isPermissionGranted(permission: String) =
-    ActivityCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-
-fun AppCompatActivity.shouldShowPermissionRationale(permission: String) =
-    ActivityCompat.shouldShowRequestPermissionRationale(this, permission)
-
-fun AppCompatActivity.batchRequestPermissions(permissions: Array<String>, requestId: Int) =
-    ActivityCompat.requestPermissions(this, permissions, requestId)
 
 class MainActivity : AppCompatActivity() {
 
@@ -33,85 +26,104 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         setSupportActionBar(toolbar)
 
-        fab.setOnClickListener { startPermissionRequest() }
-    }
-
-    private fun startPermissionRequest() {
-        /**
-         * If permission is granted then carry on. if permission is not granted then use
-         * shouldShowRequestPermissionRationale to figure out if the request has been previously denied, if
-         * don't ask again is enabled, or if the permission is being asked for the first time.
-         */
-        if (!isPermissionGranted(WRITE_EXTERNAL_STORAGE) || !isPermissionGranted(CAMERA)) {
-
-            /**
-             * if permission has not been granted then show the rationale
-             * shouldShowRequestPermissionRationale throws true if permission has been denied previously.
-             * throws false in following two cases
-             * 1. permission is being asked for the first time in which case you should just ask for permission.
-             * 2. don't ask again is enabled
-             */
-            if (shouldShowPermissionRationale(WRITE_EXTERNAL_STORAGE) || shouldShowPermissionRationale(CAMERA)) {
-                showSnackBar("Previously denied. Show rationale")
-                    .setAction("Request") {
-                        batchRequestPermissions(MULTI_PERMISSIONS_LIST, REQUEST_CODE_MULTI_PERMISSIONS)
-                    }
-                    .show()
+        fab.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                startPermissionRequest()
             } else {
-                /**
-                 * this is shown only first time when the user has not had the opportunity to select
-                 * don't ask again
-                 * perm is requested only the first time.
-                 */
-                batchRequestPermissions(MULTI_PERMISSIONS_LIST, REQUEST_CODE_MULTI_PERMISSIONS)
+                messageDialog("Permission Granted", PermDialogEnum.MESSAGE)?.show()
             }
-        } else {
-            // Granted
-            openFragTestActivity()
         }
     }
 
-    /**
-     * triggered as a result of requestPermissions
-     */
+    private fun isPermissionGranted(permissions: Array<String>): Boolean {
+        for (permission in permissions) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    permission
+                ) == PackageManager.PERMISSION_DENIED
+            ) return false
+        }
+        return true
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    private fun shouldShowRationale(permissions: Array<String>): Boolean {
+        for (permission in permissions) {
+            if (shouldShowRequestPermissionRationale(permission)) return true
+        }
+        return false
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    private fun startPermissionRequest() {
+        if (!isPermissionGranted(MULTI_PERMISSIONS_LIST)) {
+            if (shouldShowRationale(MULTI_PERMISSIONS_LIST)) {
+                messageDialog("Previously Denied. Show rationale", PermDialogEnum.REQUEST)?.show()
+            } else {
+                requestPermissions(MULTI_PERMISSIONS_LIST, REQUEST_CODE_MULTI_PERMISSIONS)
+            }
+        } else {
+            messageDialog("Permission Granted", PermDialogEnum.MESSAGE)?.show()
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<String>, grantResults: IntArray
     ) {
         when (requestCode) {
             REQUEST_CODE_MULTI_PERMISSIONS -> {
-                if ((grantResults.isNotEmpty() && grantResults[0] + grantResults[1] == PackageManager.PERMISSION_GRANTED)) {
-                    // Granted
-                    openFragTestActivity()
-                } else {
-                    /**
-                     * if permission is not granted then we can check if the user has enabled don't ask again
-                     * true - previously denied. ask asynchronously
-                     * false - don't ask again checked. you may want to show option to enable settings.
-                     */
-                    if (shouldShowPermissionRationale(WRITE_EXTERNAL_STORAGE) || shouldShowPermissionRationale(CAMERA)) {
-                        showSnackBar("Can't Perform Action: Previously denied")
-                            .setAction("Request") {
-                                batchRequestPermissions(MULTI_PERMISSIONS_LIST, REQUEST_CODE_MULTI_PERMISSIONS)
-                            }
-                            .show()
-                    } else {
-                        showSnackBar("Denied. Don't ask again. open settings").show()
-                    }
+                if ((grantResults.isNotEmpty() && grantResults.sum() == PackageManager.PERMISSION_GRANTED)) {
+                    messageDialog("Permission Granted", PermDialogEnum.MESSAGE)?.show()
+                } else if (!shouldShowRationale(MULTI_PERMISSIONS_LIST)) {
+                    messageDialog("Don't ask again. Open settings", PermDialogEnum.SETTINGS)?.show()
                 }
                 return
             }
-
             else -> {
 
             }
         }
     }
 
-    private fun showSnackBar(message: String) =
-        Snackbar.make(findViewById<CoordinatorLayout>(R.id.coordinator_layout), message, Snackbar.LENGTH_SHORT)
+    private enum class PermDialogEnum {
+        MESSAGE,
+        REQUEST,
+        SETTINGS
+    }
 
-    private fun openFragTestActivity() {
-        startActivity(Intent(this, FragTestActivity::class.java))
+    private fun messageDialog(message: String, action: PermDialogEnum): AlertDialog? {
+        val builder = AlertDialog.Builder(this)
+        with(builder) {
+            setTitle("Permissions")
+            setMessage(message)
+            setPositiveButton("Ok") { _, _ -> }
+            when (action) {
+                PermDialogEnum.REQUEST -> {
+                    setNegativeButton("Request") { _, _ ->
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                            requestPermissions(
+                                MULTI_PERMISSIONS_LIST,
+                                REQUEST_CODE_MULTI_PERMISSIONS
+                            )
+                    }
+                }
+                PermDialogEnum.SETTINGS -> {
+                    setNegativeButton("Open Settings") { _, _ ->
+                        val intent = Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:$packageName")
+                        )
+                        intent.addCategory(Intent.CATEGORY_DEFAULT)
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                    }
+                }
+                else -> {
+                }
+            }
+            return builder.create()
+        }
     }
 }
